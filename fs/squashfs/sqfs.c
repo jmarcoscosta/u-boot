@@ -1355,7 +1355,8 @@ int sqfs_read(const char *filename, void *buf, loff_t offset, loff_t len,
 			 * image with mksquashfs's -b <block_size> option.
 			 */
 			printf("Error: too many data blocks to be read.\n");
-			goto free_buffer;
+			free(data_buffer);
+			goto free_datablk;
 		}
 
 		data = data_buffer + table_offset;
@@ -1365,8 +1366,10 @@ int sqfs_read(const char *filename, void *buf, loff_t offset, loff_t len,
 			dest_len = get_unaligned_le32(&sblk->block_size);
 			ret = sqfs_decompress(&ctxt, datablock, &dest_len,
 					      data, table_size);
-			if (ret)
-				goto free_buffer;
+			if (ret) {
+				free(data_buffer);
+				goto free_datablk;
+			}
 
 			memcpy(buf + offset + *actread, datablock, dest_len);
 			*actread += dest_len;
@@ -1376,6 +1379,8 @@ int sqfs_read(const char *filename, void *buf, loff_t offset, loff_t len,
 		}
 
 		data_offset += table_size;
+
+		free(data_buffer);
 	}
 
 	free(finfo.blk_sizes);
@@ -1385,7 +1390,7 @@ int sqfs_read(const char *filename, void *buf, loff_t offset, loff_t len,
 	 */
 	if (!finfo.frag) {
 		ret = 0;
-		goto free_buffer;
+		goto free_datablk;
 	}
 
 	start = frag_entry.start / ctxt.cur_dev->blksz;
@@ -1397,7 +1402,7 @@ int sqfs_read(const char *filename, void *buf, loff_t offset, loff_t len,
 
 	if (!fragment) {
 		ret = -ENOMEM;
-		goto free_buffer;
+		goto free_datablk;
 	}
 
 	ret = sqfs_disk_read(start, n_blks, fragment);
@@ -1439,12 +1444,8 @@ int sqfs_read(const char *filename, void *buf, loff_t offset, loff_t len,
 
 free_fragment:
 	free(fragment);
-free_buffer:
-	if (datablk_count)
-		free(data_buffer);
 free_datablk:
-	if (datablk_count)
-		free(datablock);
+	free(datablock);
 free_paths:
 	free(file);
 	free(dir);
