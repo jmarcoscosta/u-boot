@@ -27,6 +27,10 @@
  */
 #define SQFS_COMPRESSED_METADATA(A) (!((A) & BIT(15)))
 #define SQFS_METADATA_SIZE(A) ((A) & GENMASK(14, 0))
+/* The export table is populated */
+#define SQFS_EXPORTABLE(A) ((A) & 0x0080)
+/* Max. number of inode references (8 bytes) by metadata block (8KiB)*/
+#define SQFS_MAX_REFERENCES 1024
 
 struct squashfs_super_block_flags {
 	/* check: unused

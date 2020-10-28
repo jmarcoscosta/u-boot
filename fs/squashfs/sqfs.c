@@ -670,6 +670,22 @@ static int sqfs_read_inode_table(unsigned char **inode_table)
 		goto free_itb;
 	}
 
+	ctxt.metadata_count = metablks_count;
+
+	ctxt.inode_metadata_blks_pos = malloc(metablks_count * sizeof(u32));
+	if (!ctxt.inode_metadata_blks_pos) {
+		ret = -ENOMEM;
+		goto free_itb;
+	}
+
+	ret = sqfs_get_metablk_pos(ctxt.inode_metadata_blks_pos, itb, table_offset,
+				   metablks_count);
+	if (ret) {
+		metablks_count = -1;
+		free(ctxt.inode_metadata_blks_pos);
+		goto free_itb;
+	}
+
 	*inode_table = malloc(metablks_count * SQFS_METADATA_BLOCK_SIZE);
 	if (!*inode_table) {
 		ret = -ENOMEM;
@@ -807,6 +823,117 @@ free_dtb:
 	free(dtb);
 
 	return metablks_count;
+}
+
+/* Takes the inode reference and returns the on-disk position */
+u64 sqfs_ref_to_offset(u64 ref)
+{
+	u32 pos, i, offset;
+
+	pos = (ref & GENMASK(31, 16)) >> 16;
+	offset = ref & GENMASK(15, 0);
+
+	if (ctxt.metadata_count == 1 || !pos)
+		return offset;
+
+	for (i = 0; i < ctxt.metadata_count; i++) {
+		if(pos == ctxt.inode_metadata_blks_pos[i])
+			return ++i*SQFS_METADATA_BLOCK_SIZE + offset;
+	}
+
+	return -EINVAL;
+}
+
+/* Reads export table in case it is populated. Returns -EINVAL otherwise. */
+int sqfs_read_export_table(u64 **table, int count)
+{
+	struct squashfs_super_block *sblk;
+	unsigned char *buffer, *src;
+	int ret = 0, n_metadata_blocks, j;
+	u64 *pos, start, table_size, n_blks, table_offset, *dest;
+	u32 src_len;
+	unsigned long dest_len;
+	bool compressed;
+
+	sblk = ctxt.sblk;
+
+	if (!SQFS_EXPORTABLE(sblk->flags))
+		return -EINVAL;
+
+	n_metadata_blocks = DIV_ROUND_UP(sblk->inodes, SQFS_MAX_REFERENCES);
+
+	pos = malloc(n_metadata_blocks * sizeof(u64));
+	if(!pos)
+		return -ENOMEM;
+
+	*table = malloc(n_metadata_blocks * SQFS_METADATA_BLOCK_SIZE);
+	if(!table) {
+		ret = -ENOMEM;
+		goto free_pos;
+	}
+
+	/* Metadata blocks locations list */
+	table_size = n_metadata_blocks * sizeof(u64);
+	start = get_unaligned_le64(&sblk->export_table_start) /
+		ctxt.cur_dev->blksz;
+	n_blks = sqfs_calc_n_blks(sblk->export_table_start,
+				  sblk->export_table_start + table_size, &table_offset);
+
+	/* Allocate a proper sized buffer the list */
+	buffer = malloc_cache_aligned(n_blks * ctxt.cur_dev->blksz);
+	if (!buffer) {
+		ret = -ENOMEM;
+		goto free_table;
+	}
+
+	if (sqfs_disk_read(start, n_blks, buffer) < 0)
+		goto free_table;
+
+	/* Fill location list */
+	for (j = 0; j < n_metadata_blocks; j++) {
+		pos[j] = get_unaligned_le64(buffer + table_offset + (j * sizeof(u64)));
+	}
+
+	free(buffer);
+
+	/* Metadata blocks (preciso deixar generalista)*/
+	for (j = 0; j < n_metadata_blocks; j++) {
+		if (j == n_metadata_blocks - 1)
+			table_size = sblk->bytes_used - pos[j];
+		else
+			table_size = pos[j + 1] - pos[j];
+		start = get_unaligned_le64(&pos[j]) / ctxt.cur_dev->blksz;
+		n_blks = sqfs_calc_n_blks(pos[j], pos[j] + table_size,
+			&table_offset);
+
+		/* Allocate a proper sized buffer the list */
+		buffer = malloc_cache_aligned(n_blks * ctxt.cur_dev->blksz);
+		if (!buffer) {
+			ret = -ENOMEM;
+			goto free_table;
+		}
+
+		if (sqfs_disk_read(start, n_blks, buffer) < 0)
+			goto free_pos;
+
+		/* Parse metadata block headers */
+		src = buffer + table_offset + SQFS_HEADER_SIZE;
+		dest_len = SQFS_METADATA_BLOCK_SIZE;
+
+		ret = sqfs_read_metablock(buffer, table_offset, &compressed, &src_len);
+		if (compressed) {
+			dest = *table + (j * SQFS_METADATA_BLOCK_SIZE / sizeof(u64));
+			ret = sqfs_decompress(&ctxt, dest, &dest_len, src, src_len);
+		}
+
+		free(buffer);
+	}
+
+free_pos:
+	free(pos);
+free_table:
+
+	return ret;
 }
 
 int sqfs_opendir(const char *filename, struct fs_dir_stream **dirsp)
@@ -1556,4 +1683,5 @@ void sqfs_closedir(struct fs_dir_stream *dirs)
 	free(sqfs_dirs->inode_table);
 	free(sqfs_dirs->dir_table);
 	free(sqfs_dirs->dir_header);
+	free(ctxt.inode_metadata_blks_pos);
 }

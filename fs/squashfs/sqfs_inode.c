@@ -111,7 +111,17 @@ void *sqfs_find_inode(void *inode_table, int inode_number, __le32 inode_count,
 {
 	struct squashfs_base_inode *base;
 	unsigned int offset = 0, k;
-	int sz;
+	u64 *export_table, ref;
+	int sz, ret;
+
+	ret = sqfs_read_export_table(&export_table, inode_count);
+
+	if(!ret)
+	{
+		ref = export_table[inode_number - 1];
+		free(export_table);
+		return inode_table + sqfs_ref_to_offset(ref);
+	}
 
 	if (!inode_table) {
 		printf("%s: Invalid pointer to inode table.\n", __func__);

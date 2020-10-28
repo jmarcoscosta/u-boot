@@ -77,9 +77,11 @@ struct squashfs_ctxt {
 	struct disk_partition cur_part_info;
 	struct blk_desc *cur_dev;
 	struct squashfs_super_block *sblk;
+	size_t metadata_count;
 #if IS_ENABLED(CONFIG_ZSTD)
 	void *zstd_workspace;
 #endif
+	u32 *inode_metadata_blks_pos;
 };
 
 struct squashfs_directory_index {
@@ -306,5 +308,7 @@ int sqfs_read_metablock(unsigned char *file_mapping, int offset,
 bool sqfs_is_empty_dir(void *dir_i);
 
 bool sqfs_is_dir(u16 type);
+int sqfs_read_export_table(u64 **table, int count);
+u64 sqfs_ref_to_offset(u64 ref);
 
 #endif /* SQFS_FILESYSTEM_H */
