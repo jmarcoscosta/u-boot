@@ -860,7 +860,8 @@ int sqfs_read_export_table(u64 **table, int count)
 	if (!SQFS_EXPORTABLE(sblk->flags))
 		return -EINVAL;
 
-	n_metadata_blocks = DIV_ROUND_UP(sblk->inodes, SQFS_MAX_REFERENCES);
+	n_metadata_blocks = DIV_ROUND_UP(get_unaligned_le32(&sblk->inodes),
+		SQFS_MAX_REFERENCES);
 
 	pos = malloc(n_metadata_blocks * sizeof(u64));
 	if(!pos)
